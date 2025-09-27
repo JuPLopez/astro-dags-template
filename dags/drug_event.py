@@ -8,13 +8,13 @@ from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 # Config GCP/BigQuery
 GCP_PROJECT = "ciencia-de-dados-470814"
 BQ_DATASET = "enapdatasets"
-BQ_TABLE = "fda_events2"
+BQ_TABLE = "fda_events3"
 BQ_LOCATION = "US"
 GCP_CONN_ID = "google_cloud_default"
 
 
 @dag(
-    dag_id="openfda_sildenafil_events",
+    dag_id="drug_event",
     description="Recupera dados mensais do OpenFDA e salva no BigQuery",
     start_date=datetime(2020, 1, 1),  # início histórico
     schedule="@monthly",               # executa no 1º dia de cada mês
