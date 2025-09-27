@@ -10,102 +10,109 @@ import pandas as pd
 # Config
 GCP_PROJECT = "ciencia-de-dados-470814"
 BQ_DATASET = "enapdatasets"
-BQ_TABLE = "fda_events3"
+BQ_TABLE = "fda_events_rinvoq"
 BQ_LOCATION = "US"
 GCP_CONN_ID = "google_cloud_default"
 
-@dag(
-    dag_id="openFDA_julopez_rinvoq",
-    schedule="@once",
-    start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
-    catchup=False,
-    default_args={
-        "email_on_failure": True,
-        "owner": "Juliana Lopez",
-        "retries": 1,
-    },
-    tags=["openfda", "bigquery"]
-)
-def openfda_dag():
-    
-    @task
-    def fetch_and_save():
-        # Período com dados reais
-        start = date(2023, 1, 1)
-        end = date(2023, 1, 31)
-        
-        # URL da API
-        start_str = start.strftime("%Y%m%d")
-        end_str = end.strftime("%Y%m%d")
-        url = f"https://api.fda.gov/drug/event.json?search=patient.drug.medicinalproduct:rinvoq+AND+receivedate:[{start_str}+TO+{end_str}]"
-        
-        try:
-            # Buscar dados
-            session = requests.Session()
-            response = session.get(url, timeout=30)
-            
-            if response.status_code != 200:
-                return f"Erro API: {response.status_code}"
-            
-            data = response.json()
-            results = data.get("results", [])
-            
-            if not results:
-                return "Nenhum evento encontrado"
-            
-            # Processar dados
-            records = []
-            for event in results:
-                record = {
-                    'receivedate': event.get('receivedate', ''),
-                    'safetyreportid': event.get('safetyreportid', ''),
-                    'serious': event.get('serious', ''),
-                    'companynumb': event.get('companynumb', ''),
-                }
-                
-                if 'patient' in event:
-                    patient = event['patient']
-                    record['patientage'] = patient.get('patientage', '')
-                    record['patientsex'] = patient.get('patientsex', '')
-                
-                if 'patient' in event and 'drug' in event['patient']:
-                    drugs = event['patient']['drug']
-                    if drugs:
-                        drug_info = drugs[0]
-                        record['medicinalproduct'] = drug_info.get('medicinalproduct', '')
-                        record['drugaction'] = drug_info.get('actiondrug', '')
-                
-                records.append(record)
-            
-            df = pd.DataFrame(records)
-            
-            if len(df) > 0:
-                # -------- Load to BigQuery using pandas-gbq --------
-                # Get auth credentials from Airflow connection
-                bq_hook = BigQueryHook(
-                    gcp_conn_id=GCP_CONN_ID, 
-                    location=BQ_LOCATION, 
-                    use_legacy_sql=False
-                )
-                credentials = bq_hook.get_credentials()
-                destination_table = f"{BQ_DATASET}.{BQ_TABLE}"
-                
-                # Salvar no BigQuery
-                df.to_gbq(
-                    destination_table=destination_table,
-                    project_id=GCP_PROJECT,
-                    if_exists="replace",
-                    credentials=credentials,
-                    location=BQ_LOCATION
-                )
-                
-                return f"Sucesso! {len(df)} eventos salvos em {destination_table}"
-            else:
-                return "DataFrame vazio"
-                
-        except Exception as e:
-            return f"Erro: {str(e)}"
-    
-    fetch_and_save()
+def generate_query_url(year: int, month: int) -> str:
+    # Build [YYYYMMDD TO YYYYMMDD] for the whole month
+    start_date = f"{year}{month:02d}01"
+    end_day = monthrange(year, month)[1]
+    end_date = f"{year}{month:02d}{end_day:02d}"
+    # OpenFDA query for sildenafil citrate, grouped by receivedate
+    return (
+        "https://api.fda.gov/drug/event.json"
+        f"?search=patient.drug.medicinalproduct:%22rinvoq%22"
+        f"+AND+receivedate:[{start_date}+TO+{end_date}]&count=receivedate"
+    )
 
-dag = openfda_dag()
+
+@task
+def fetch_openfda_data() -> list[dict]:
+    """
+    Fetch OpenFDA events for the DAG's month and return weekly sums.
+    Returning a JSON-serializable object automatically stores it in XCom.
+    """
+    ctx = get_current_context()
+    # Airflow 2.x: logical_date is the run's timestamp (pendulum dt)
+    logical_date = ctx["data_interval_start"]
+    year, month = logical_date.year, logical_date.month
+
+    url = generate_query_url(year, month)
+    try:
+        resp = requests.get(url, timeout=30)
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        # Return empty list so downstream task can decide what to do
+        print(f"OpenFDA request failed: {e}")
+        return []
+
+    data = resp.json()
+    results = data.get("results", [])
+    if not results:
+        return []
+
+    df = pd.DataFrame(results)
+    # Expecting columns: 'time' (YYYYMMDD), 'count'
+    df["time"] = pd.to_datetime(df["time"], format="%Y%m%d", errors="coerce")
+    df = df.dropna(subset=["time"])
+
+    # Weekly aggregation (week ending Sunday). Adjust freq if you prefer another anchor.
+    weekly = (
+        df.groupby(pd.Grouper(key="time", freq="W"))["count"]
+        .sum()
+        .reset_index()
+        .sort_values("time")
+    )
+    # Convert datetimes to ISO strings for XCom safety
+    weekly["time"] = weekly["time"].dt.strftime("%Y-%m-%d")
+
+    # Return a list of records; TaskFlow will put this into XCom automatically
+    return weekly.to_dict(orient="records")
+
+
+@task
+def save_to_postgresql(rows: list[dict]) -> None:
+    """
+    Save rows (list of {'time': 'YYYY-MM-DD', 'count': int}) to Postgres.
+    """
+    if not rows:
+        print("No data to write to Postgres for this period.")
+        return
+
+    import pandas as pd
+    from airflow.providers.postgres.hooks.postgres import PostgresHook
+
+    df = pd.DataFrame(rows)
+    pg_hook = PostgresHook(postgres_conn_id="postgres")
+    engine = pg_hook.get_sqlalchemy_engine()
+
+    # Use a transaction
+    with engine.begin() as conn:
+        df.to_sql("openfda_data", con=conn, if_exists="append", index=False)
+
+
+default_args = {
+    "owner": "airflow",
+    "depends_on_past": False,
+    "retries": 1,
+    "retry_delay": timedelta(minutes=5),
+}
+
+
+@dag(
+    dag_id="fetch_openfda_data_monthly",
+    description="Retrieve OpenFDA sildenafil citrate events monthly and save weekly sums",
+    default_args=default_args,
+    schedule="@monthly",
+    start_date=datetime(2023, 11, 1),
+    catchup=True,
+    max_active_runs=1,  # limit concurrent backfills if desired
+    tags=["openfda", "example"],
+)
+def fetch_openfda_data_monthly():
+    weekly_rows = fetch_openfda_data()
+    save_to_postgresql(weekly_rows)
+
+
+dag = fetch_openfda_data_monthly()
