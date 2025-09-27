@@ -13,7 +13,7 @@ BQ_LOCATION = "US"
 GCP_CONN_ID = "google_cloud_default"
 
 @dag(
-    dag_id="openFDA_julopez",
+    dag_id="openFDA_julopez_rinvoq",
     schedule="@once",
     start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
     catchup=False,
