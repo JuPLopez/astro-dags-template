@@ -15,7 +15,7 @@ GCP_CONN_ID = "google_cloud_default"
 @dag(
     dag_id="openfda_tobacco",
     schedule="@once",
-    start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
+    start_date=pendulum.datetime(2025, 9, 27, tz="UTC"),
     catchup=False,
     default_args={
         "email_on_failure": True,
@@ -29,13 +29,13 @@ def tobacco_date_range_dag():
     @task
     def fetch_tobacco_by_date_range():
         # Período com dados reais (mude para um período com dados disponíveis)
-        start = date(2023, 7, 1)  # 2023 em vez de 2025 (futuro)
-        end = date(2023, 8, 31)   # 2023 em vez de 2025 (futuro)
+        start = date(2025, 7, 1) 
+        end = date(2025, 8, 31)  
         
         # URL da API - CORREÇÃO: endpoint correto é tobacco/problem.json
         start_str = start.strftime("%Y%m%d")
         end_str = end.strftime("%Y%m%d")
-        url = f"https://api.fda.gov/tobacco/problem.json?search=date_submitted:[{start_str}+TO+{end_str}]&limit=1000"
+        url = f"https://api.fda.gov/tobacco/problem.json?search=date_submitted:[{start_str}+TO+{end_str}]&limit=100"
                        
         try:
             # Buscar dados da API
@@ -97,3 +97,4 @@ def tobacco_date_range_dag():
     fetch_tobacco_by_date_range()
 
 dag = tobacco_date_range_dag()
+
