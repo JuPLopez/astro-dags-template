@@ -15,7 +15,7 @@ GCP_CONN_ID = "google_cloud_default"
 @dag(
     dag_id="openFDA_julopez_tob",
     schedule="@once",
-    start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
+    start_date=pendulum.datetime(2023, 1, 1, tz="UTC"),
     catchup=False,
     default_args={
         "email_on_failure": True,
@@ -107,6 +107,7 @@ def openfda_dag():
     fetch_and_save()
 
 dag = openfda_dag()
+
 
 
 
