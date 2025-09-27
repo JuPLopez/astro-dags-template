@@ -1,78 +1,109 @@
-from __future__ import annotations
 from airflow.decorators import dag, task
-from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
-import pendulum
-import pandas as pd
-import requests
 from datetime import date
+import pendulum
+import requests
+import pandas as pd
+from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 
-# Configurações
-GCP_PROJECT  = "ciencia-de-dados-470814"
-BQ_DATASET   = "enapdatasets"
-BQ_TABLE     = "fda"
-BQ_LOCATION  = "US"
-GCP_CONN_ID  = "google_cloud_default"
-USE_POOL     = True
-POOL_NAME    = "openfda_api"
-TEST_START = date(2025, 7, 1)
-TEST_END   = date(2025, 8, 31)
-DRUG_QUERY = 'sildenafil+citrate'
+# Config
+GCP_PROJECT = "ciencia-de-dados-470814"
+BQ_DATASET = "enapdatasets"
+BQ_TABLE = "fda"
+BQ_LOCATION = "US"
+GCP_CONN_ID = "google_cloud_default"
 
-SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "openfda-etl/1.0"})
+@dag(
+    dag_id="openfda_julopez",
+    schedule="@once",
+    start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
+    catchup=False,
+    default_args={
+        "email_on_failure": True,
+        "owner": "Juliana Lopez",
+        "retries": 1,
+    },
+    tags=["openfda", "bigquery"]
+)
+def openfda_dag():
+    
+    @task
+    def fetch_and_save():
+        # Período com dados reais
+        start = date(2023, 1, 1)
+        end = date(2023, 1, 31)
+        
+        # URL da API
+        start_str = start.strftime("%Y%m%d")
+        end_str = end.strftime("%Y%m%d")
+        url = f"https://api.fda.gov/drug/event.json?search=receivedate:[{start_str}+TO+{end_str}]&limit=100"
+        
+        try:
+            # Buscar dados
+            session = requests.Session()
+            response = session.get(url, timeout=30)
+            
+            if response.status_code != 200:
+                return f"Erro API: {response.status_code}"
+            
+            data = response.json()
+            results = data.get("results", [])
+            
+            if not results:
+                return "Nenhum evento encontrado"
+            
+            # Processar dados
+            records = []
+            for event in results:
+                record = {
+                    'receivedate': event.get('receivedate', ''),
+                    'safetyreportid': event.get('safetyreportid', ''),
+                    'serious': event.get('serious', ''),
+                    'companynumb': event.get('companynumb', ''),
+                }
+                
+                if 'patient' in event:
+                    patient = event['patient']
+                    record['patientage'] = patient.get('patientage', '')
+                    record['patientsex'] = patient.get('patientsex', '')
+                
+                if 'patient' in event and 'drug' in event['patient']:
+                    drugs = event['patient']['drug']
+                    if drugs:
+                        drug_info = drugs[0]
+                        record['medicinalproduct'] = drug_info.get('medicinalproduct', '')
+                        record['drugaction'] = drug_info.get('actiondrug', '')
+                
+                records.append(record)
+            
+            df = pd.DataFrame(records)
+            
+            if len(df) > 0:
+                # -------- Load to BigQuery using pandas-gbq --------
+                # Get auth credentials from Airflow connection
+                bq_hook = BigQueryHook(
+                    gcp_conn_id=GCP_CONN_ID, 
+                    location=BQ_LOCATION, 
+                    use_legacy_sql=False
+                )
+                credentials = bq_hook.get_credentials()
+                destination_table = f"{BQ_DATASET}.{BQ_TABLE}"
+                
+                # Salvar no BigQuery
+                df.to_gbq(
+                    destination_table=destination_table,
+                    project_id=GCP_PROJECT,
+                    if_exists="replace",
+                    credentials=credentials,
+                    location=BQ_LOCATION
+                )
+                
+                return f"Sucesso! {len(df)} eventos salvos em {destination_table}"
+            else:
+                return "DataFrame vazio"
+                
+        except Exception as e:
+            return f"Erro: {str(e)}"
+    
+    fetch_and_save()
 
-def _openfda_get(url: str) -> dict:
-    r = SESSION.get(url, timeout=30)
-    if r.status_code == 404:
-        return {"results": []}
-    r.raise_for_status()
-    return r.json()
-
-def _build_openfda_url(start: date, end: date, drug_query: str) -> str:
-    start_str = start.strftime("%Y%m%d")
-    end_str   = end.strftime("%Y%m%d")
-    return ("https://api.fda.gov/drug/event.json"
-            f"?search=patient.drug.medicinalproduct:%22{drug_query}%22"
-            f"+AND+receivedate:[{start_str}+TO+{end_str}]"
-            "&count=receivedate")
-
-_task_kwargs = dict(retries=0)
-if USE_POOL:
-    _task_kwargs["pool"] = POOL_NAME
-
-@task(**_task_kwargs)
-def fetch_fixed_range_and_to_bq():
-    url = _build_openfda_url(TEST_START, TEST_END, DRUG_QUERY)
-    data = _openfda_get(url)
-    results = data.get("results", [])
-    if not results:
-        return
-    df = pd.DataFrame(results).rename(columns={"count": "events"})
-    df["time"] = pd.to_datetime(df["time"], format="%Y%m%d", utc=True)
-    df["win_start"] = pd.to_datetime(TEST_START)
-    df["win_end"]   = pd.to_datetime(TEST_END)
-    df["drug"]      = DRUG_QUERY.replace("+", " ")
-    bq_hook = BigQueryHook(gcp_conn_id=GCP_CONN_ID, location=BQ_LOCATION, use_legacy_sql=False)
-    df.to_gbq(destination_table=f"{BQ_DATASET}.{BQ_TABLE}",
-              project_id=GCP_PROJECT,
-              if_exists="append",
-              credentials=bq_hook.get_credentials(),
-              table_schema=[
-                {"name": "time", "type": "TIMESTAMP"},
-                {"name": "events", "type": "INTEGER"},
-                {"name": "win_start", "type": "DATE"},
-                {"name": "win_end", "type": "DATE"},
-                {"name": "drug", "type": "STRING"}],
-              location=BQ_LOCATION,
-              progress_bar=False)
-
-@dag(dag_id="openfda_julopez",
-     schedule="@once",
-     start_date=pendulum.datetime(2025, 9, 23, tz="UTC"),
-     catchup=False,
-     max_active_runs=1,
-     tags=["openfda", "bigquery", "test", "range"])
-def openfda_pipeline_test_range():
-    fetch_fixed_range_and_to_bq()
-
-dag = openfda_pipeline_test_range()
+dag = openfda_dag()
