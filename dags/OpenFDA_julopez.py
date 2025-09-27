@@ -16,6 +16,20 @@ def generate_query_url(year, month):
     query = f"https://api.fda.gov/drug/event.json?search=patient.drug.medicinalproduct:%22sildenafil+citrate%22+AND+receivedate:[{start_date}+TO+{end_date}]&count=receivedate"
     return query
 
+# ====== CONFIG ======
+GCP_PROJECT  = "ciencia-de-dados-470814"      # e.g., "my-gcp-project"
+BQ_DATASET   = "enapdatasets"                    # e.g., "crypto"
+BQ_TABLE     = "bitcoin_2"    # e.g., "bitcoin_history_hourly"
+BQ_LOCATION  = "US"                        # dataset location: "US" or "EU"
+GCP_CONN_ID  = "google_cloud_default"      # Airflow connection with a SA that can write to BQ
+# ====================
+
+DEFAULT_ARGS = {
+    "email_on_failure": True,
+    "owner": "Alex Lopes,Open in Cloud IDE",
+}
+
+
 # Function to fetch data from the API and save it to XCom
 def fetch_openfda_data(ds, ti, **context):
     from airflow.operators.python import get_current_context
@@ -92,5 +106,6 @@ save_data_task = PythonOperator(
 )
 
 fetch_data_task >> save_data_task
+
 
 
