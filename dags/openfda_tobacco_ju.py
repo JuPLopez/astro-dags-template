@@ -14,7 +14,7 @@ BQ_LOCATION = "US"
 GCP_CONN_ID = "google_cloud_default"
 
 @dag(
-    dag_id="openfda_tobacco",
+    dag_id="openfda_tobacco_ju",
     schedule="@once",
     start_date=pendulum.datetime(2025, 9, 27, tz="UTC"),
     catchup=False,
@@ -95,3 +95,4 @@ def tobacco_date_range_dag():
     fetch_tobacco_by_date_range()
 
 dag = tobacco_date_range_dag()
+
