@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 from airflow.decorators import dag, task
-from datetime import date
-import pendulum
+from airflow.operators.python import get_current_context
+from datetime import datetime, timedelta
+from calendar import monthrange
 import requests
 import pandas as pd
-from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 
 # Config
 GCP_PROJECT = "ciencia-de-dados-470814"
