@@ -1,4 +1,5 @@
 from airflow.decorators import dag, task
+from datetime import date
 import pendulum
 import requests
 import pandas as pd
@@ -27,14 +28,14 @@ def tobacco_date_range_dag():
     
     @task
     def fetch_tobacco_by_date_range():
-        # Período com dados reais
-        start = date(2025, 7, 1)
-        end = date(2025, 8, 31)
+        # Período com dados reais (mude para um período com dados disponíveis)
+        start = date(2023, 7, 1)  # 2023 em vez de 2025 (futuro)
+        end = date(2023, 8, 31)   # 2023 em vez de 2025 (futuro)
         
-        # URL da API
+        # URL da API - CORREÇÃO: endpoint correto é tobacco/problem.json
         start_str = start.strftime("%Y%m%d")
         end_str = end.strftime("%Y%m%d")
-        url = f"https://api.fda.gov/drug/tobacco/problem.json?search=receivedate:[{start_str}+TO+{end_str}]&limit=1000"
+        url = f"https://api.fda.gov/tobacco/problem.json?search=date_submitted:[{start_str}+TO+{end_str}]&limit=1000"
                        
         try:
             # Buscar dados da API
@@ -48,7 +49,7 @@ def tobacco_date_range_dag():
             results = data.get("results", [])
             
             if not results:
-                return "Nenhum registro encontrado"
+                return f"Nenhum registro encontrado para o período {start_str} a {end_str}"
             
             # Processar dados baseado na documentação
             records = []
@@ -86,7 +87,7 @@ def tobacco_date_range_dag():
                     location=BQ_LOCATION
                 )
                 
-                return f"Sucesso! {len(df)} registros do período {start_date} a {end_date} salvos"
+                return f"Sucesso! {len(df)} registros do período {start_str} a {end_str} salvos"
             else:
                 return "DataFrame vazio"
                 
@@ -96,4 +97,3 @@ def tobacco_date_range_dag():
     fetch_tobacco_by_date_range()
 
 dag = tobacco_date_range_dag()
-
