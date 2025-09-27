@@ -13,7 +13,7 @@ BQ_LOCATION = "US"
 GCP_CONN_ID = "google_cloud_default"
 
 @dag(
-    dag_id="openfda_mcb2_test_range",
+    dag_id="openfda_julopez",
     schedule="@once",
     start_date=pendulum.datetime(2025, 9, 23, tz="UTC"),
     catchup=False,
@@ -77,3 +77,4 @@ def openfda_dag():
     fetch_and_save()
 
 dag = openfda_dag()
+
