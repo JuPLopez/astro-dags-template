@@ -1,6 +1,4 @@
-from airflow import DAG
-from airflow.decorators import task
-from airflow.utils.dates import days_ago
+from airflow.decorators import dag, task
 from pendulum import datetime
 import requests
 import pandas as pd
@@ -10,26 +8,28 @@ from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 # Config GCP/BigQuery
 GCP_PROJECT = "ciencia-de-dados-470814"
 BQ_DATASET = "enapdatasets"
-BQ_TABLE = "fda_events3"
+BQ_TABLE = "fda_events2"
 BQ_LOCATION = "US"
 GCP_CONN_ID = "google_cloud_default"
 
-# Definição do DAG
-with DAG(
-    dag_id="drug_event.py",
+
+@dag(
+    dag_id="openfda_sildenafil_events",
     description="Recupera dados mensais do OpenFDA e salva no BigQuery",
-    start_date=datetime(2020, 1, 1),   # início histórico
+    start_date=datetime(2020, 1, 1),  # início histórico
     schedule="@monthly",               # executa no 1º dia de cada mês
     catchup=True,                      # executa retroativo desde 2020
     max_active_runs=1,
     default_args={"owner": "juliana", "retries": 1},
     tags=["openfda", "drug", "etl", "bigquery"],
-) as dag:
+)
+def openfda_pipeline():
+    """Pipeline mensal que coleta dados do OpenFDA e salva no BigQuery."""
 
     @task()
     def extract_data(execution_date=None):
         """
-        Extrai dados do mês anterior da API OpenFDA e retorna como DataFrame.
+        Extrai dados do mês anterior da API OpenFDA e retorna como DataFrame serializado.
         """
         # Calcula mês anterior
         year = execution_date.subtract(months=1).year
@@ -52,7 +52,6 @@ with DAG(
         data = response.json().get("results", [])
         df = pd.DataFrame(data)
 
-        # Retorna como dict para o XCom
         return df.to_dict(orient="list")
 
     @task()
@@ -66,7 +65,7 @@ with DAG(
             print("Nenhum dado retornado para este período.")
             return "skip"
 
-        # Adiciona coluna de referência do mês
+        # Adiciona colunas de referência
         ref_year = execution_date.subtract(months=1).year
         ref_month = execution_date.subtract(months=1).month
         df["ref_year"] = ref_year
@@ -89,6 +88,10 @@ with DAG(
 
         return f"{len(df)} linhas carregadas no BigQuery"
 
-    # Definição do fluxo
+    # Encadeamento das tarefas
     raw_data = extract_data()
     load_to_bigquery(raw_data)
+
+
+# Instancia o DAG
+openfda_dag = openfda_pipeline()
