@@ -8,12 +8,12 @@ from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 # Config
 GCP_PROJECT = "ciencia-de-dados-470814"
 BQ_DATASET = "enapdatasets"
-BQ_TABLE = "fda"
+BQ_TABLE = "fda_events"
 BQ_LOCATION = "US"
 GCP_CONN_ID = "google_cloud_default"
 
 @dag(
-    dag_id="openfda_julopez",
+    dag_id="openfda_sildenafil_events",
     schedule="@once",
     start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
     catchup=False,
@@ -78,26 +78,22 @@ def openfda_dag():
             df = pd.DataFrame(records)
             
             if len(df) > 0:
-                # -------- Load to BigQuery using pandas-gbq --------
-                # Get auth credentials from Airflow connection
+                # Salvar no BigQuery
                 bq_hook = BigQueryHook(
                     gcp_conn_id=GCP_CONN_ID, 
-                    location=BQ_LOCATION, 
+                    location=BQ_LOCATION,
                     use_legacy_sql=False
                 )
-                credentials = bq_hook.get_credentials()
-                destination_table = f"{BQ_DATASET}.{BQ_TABLE}"
                 
-                # Salvar no BigQuery
                 df.to_gbq(
-                    destination_table=destination_table,
+                    destination_table=f"{BQ_DATASET}.{BQ_TABLE}",
                     project_id=GCP_PROJECT,
                     if_exists="replace",
-                    credentials=credentials,
+                    credentials=bq_hook.get_credentials(),
                     location=BQ_LOCATION
                 )
                 
-                return f"Sucesso! {len(df)} eventos salvos em {destination_table}"
+                return f"Sucesso! {len(df)} eventos salvos"
             else:
                 return "DataFrame vazio"
                 
