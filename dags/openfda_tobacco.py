@@ -35,7 +35,7 @@ def openfda_dag():
         # URL da API
         start_str = start.strftime("%Y%m%d")
         end_str = end.strftime("%Y%m%d")
-        url = f"https://api.fda.gov/drug/event.json?search=patient.drug.medicinalproduct:"sildenafil+citrate"+AND+receivedate:[{start_str}+TO+{end_str}]"
+        url = f"https://api.fda.gov/drug/event.json?search=patient.drug.medicinalproduct:'sildenafil+citrate'+AND+receivedate:[{start_str}+TO+{end_str}]"
         
         try:
             # Buscar dados
@@ -107,5 +107,6 @@ def openfda_dag():
     fetch_and_save()
 
 dag = openfda_dag()
+
 
 
